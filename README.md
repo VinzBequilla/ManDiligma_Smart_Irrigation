@@ -1,4 +1,4 @@
-Smart Irrigation System with Machine Learning
+Smart Irrigation System for Lettuce with Machine Learning
 This project demonstrates a smart irrigation system that uses a machine learning model to predict the precise amount of water needed for crops based on environmental sensor readings. The system leverages historical data to make intelligent, data-driven decisions, optimizing water usage and promoting sustainable agriculture.
 
 The core of this project is a Python script that trains a Support Vector Regression (SVR) model to predict water requirements. This approach moves beyond simple on/off irrigation rules and provides a more accurate, tailored solution for your plants.
