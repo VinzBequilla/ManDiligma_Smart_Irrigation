@@ -32,7 +32,8 @@ Prerequisites
 - scikit-learn
 - numpy
 - joblib
+- pyserial
 
 ### You can install these libraries using pip:
 
-``` pip install pandas scikit-learn numpy joblib ```
+``` pip install pandas scikit-learn numpy joblib pyserial ```
