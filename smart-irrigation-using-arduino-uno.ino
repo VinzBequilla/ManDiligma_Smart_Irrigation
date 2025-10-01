@@ -1,48 +1,93 @@
-#include <DHT.h>
+/* Change these values based on your calibration values */
+#include "DHT.h"
+#define soilWet 500  // Define max value we consider soil 'wet'
+#define soilDry 750  // Define min value we consider soil 'dry'
 
-#define SOIL_PIN A0     // Soil moisture sensor analog pin
-#define PUMP_PIN 3      // Pump relay digital pin
-#define DHT_PIN 2       // DHT22 data pin for temperature/humidity
-#define DHT_TYPE DHT22  // Sensor type
+// Sensor pins
+#define sensorPower 7
+#define sensorPin A0
 
-DHT dht(DHT_PIN, DHT_TYPE);
+#define DHTPIN 2 
+// Pump pin
+#define pumpPin 3
 
+#define DHTTYPE DHT22
+
+DHT dht(DHTPIN, DHTTYPE);
 void setup() {
-  pinMode(PUMP_PIN, OUTPUT);
-  digitalWrite(PUMP_PIN, LOW);  // Pump off
+  pinMode(sensorPower, OUTPUT);
+  pinMode(pumpPin, OUTPUT); // Configure pump pin as an output
+
+  // Initially keep the sensor and pump OFF
+  digitalWrite(sensorPower, LOW);
+  digitalWrite(pumpPin, HIGH);
+
   Serial.begin(9600);
   dht.begin();
-  delay(2000);
-  Serial.println("Arduino ready.");
 }
 
 void loop() {
-  // Read sensors
-  int raw_moisture = analogRead(SOIL_PIN);
-  float moisture = 100 - (raw_moisture / 1023.0 * 100);  // Convert to dryness % (high = dry)
-  float temp = dht.readTemperature();
-  float hum = dht.readHumidity();
 
-  Serial.print(moisture);
-  Serial.print(",");
-  Serial.print(isnan(temp) ? 25.0 : temp);  // Default 25°C if error
-  Serial.print(",");
-  Serial.println(isnan(hum) ? 60.0 : hum);  // Default 60% if error
+  
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  float h = dht.readHumidity();
+  // Read temperature as Celsius (the default)
+  float t = dht.readTemperature();
+  // Read temperature as Fahrenheit (isFahrenheit = true)
+  float f = dht.readTemperature(true);
 
-  // Listen for pump command from Python (e.g., "PUMP:15")
-  if (Serial.available() > 0) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();
-    if (command.startsWith("PUMP:")) {
-      int runtime_s = command.substring(5).toInt();
-      if (runtime_s > 0) {
-        digitalWrite(PUMP_PIN, HIGH);  // Start pump
-        delay(runtime_s * 1000);       // Run for exact seconds
-        digitalWrite(PUMP_PIN, LOW);   // Stop pump
-        Serial.println("PUMP_DONE");   // Acknowledge
-      }
-    }
+  // Check if any reads failed and exit early (to try again).
+  if (isnan(h) || isnan(t) || isnan(f)) {
+    Serial.println(F("Failed to read from DHT sensor!"));
+    return;
   }
 
-  delay(5000);  // Send data every 5 seconds
+  // Compute heat index in Fahrenheit (the default)
+  float hif = dht.computeHeatIndex(f, h);
+  // Compute heat index in Celsius (isFahreheit = false)
+  float hic = dht.computeHeatIndex(t, h, false);
+
+  Serial.print(F("Humidity: "));
+  Serial.print(h);
+  Serial.print(F("%  Temperature: "));
+  Serial.print(t);
+  Serial.print(F("°C "));
+  Serial.print(f);
+  Serial.print(F("°F  Heat index: "));
+  Serial.print(hic);
+  Serial.print(F("°C "));
+  Serial.print(hif);
+  Serial.println(F("°F"));
+  
+  //get the reading from the function below and print it
+  int moisture = readSensor();
+  Serial.print("Analog Output: ");
+  Serial.println(moisture);
+
+  // Determine status of our soil and control the pump
+  if (moisture < soilWet) {
+    Serial.println("Status: Soil is too wet");
+    digitalWrite(pumpPin, HIGH); // Turn the pump OFF
+  } else if (moisture >= soilWet && moisture < soilDry) {
+    Serial.println("Status: Soil moisture is perfect");
+    digitalWrite(pumpPin, HIGH); // Turn the pump OFF
+  } else {
+    Serial.println("Status: Soil is too dry - time to water!");
+    digitalWrite(pumpPin, LOW); // Turn the pump ON
+  }
+
+  delay(1000); // Take a reading every second for testing
+               // Normally you should take reading perhaps once or twice a day
+  Serial.println();
+}
+
+
+// This function returns the analog soil moisture measurement
+int readSensor() {
+  digitalWrite(sensorPower, HIGH);  // Turn the sensor ON
+  delay(300);                       // Allow power to settle
+  int val = analogRead(sensorPin);  // Read the analog value form sensor
+  digitalWrite(sensorPower, LOW);   // Turn the sensor OFF
+  return val;                       // Return analog moisture value
 }

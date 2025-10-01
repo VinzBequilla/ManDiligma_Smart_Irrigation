@@ -7,7 +7,7 @@ import signal
 
 # Configuration
 MODEL_FILE = 'irrigation_model.pkl'  # Path to your trained SVR model
-SERIAL_PORT = 'COM3'  # Update to your Arduino's port (e.g., '/dev/ttyUSB0' on Linux/Mac)
+SERIAL_PORT = 'COM4'  # Update to your Arduino's port (e.g., '/dev/ttyUSB0' on Linux/Mac)
 BAUD_RATE = 9600
 FLOW_RATE_ML_PER_S = 6.67  # Calibrated flow rate (e.g., 100 ml in 15 seconds → 6.67 ml/s)
 MIN_WATER_ML = 10  # Minimum water to trigger pump (avoid tiny runs)
