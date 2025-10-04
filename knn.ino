@@ -1,16 +1,5 @@
 #include <DHT.h>
-#include <math.h>
-#include <WiFiS3.h>
-#include <ArduinoHttpClient.h>
-#include <avr/pgmspace.h> // For PROGMEM
-
-// Wi-Fi credentials
-#define WIFI_SSID "PLDTFIBRAR1"
-#define WIFI_PASSWORD "Spiderman.416"
-
-// Firebase configuration
-#define DATABASE_URL "mandiligma-16e1c-default-rtdb.asia-southeast1.firebasedatabase.app"
-#define DATABASE_SECRET "FfG5XWSYCZ0LUQbF8NSuvuhFZY4tGHVlPU2Alw6x" // Replace with your Firebase database secret
+#include <Arduino_KNN.h>
 
 // Pin definitions
 #define SOIL_PIN A0
@@ -18,103 +7,223 @@
 #define DHT_PIN 2
 #define DHT_TYPE DHT22
 
-// Relay configuration (true for active-low, false for active-high)
-#define RELAY_ACTIVE_LOW true
-
-DHT dht(DHT_PIN, DHT_TYPE);
-RTC_DS3231 rtc; // Real-time clock
-
-// Wi-Fi and HTTP client
-WiFiSSLClient wifi;
-HttpClient client = HttpClient(wifi, DATABASE_URL, 443); // Firebase uses HTTPS (port 443)
-
-// k-NN parameters and dataset
-const int NUM_SAMPLES = 200;
-const int NUM_FEATURES = 4;
-const int K = 3;
-const float dataset[NUM_SAMPLES][NUM_FEATURES] PROGMEM = {
-    {0.2360, 0.5364, 0.3805, 0.6063}, {0.5618, 0.0091, 0.3789, 0.6069}, /* ... your full dataset ... */
-    // Add the remaining 198 samples here (omitted for brevity)
-    {0.9775, 0.8182, 0.3792, 0.6092}
-};
-const int labels[NUM_SAMPLES] PROGMEM = {
-    1, 1, 1, 1, 0, 1, 1, 0, 0, 0, /* ... your full labels ... */
-    // Add the remaining 190 labels here (omitted for brevity)
-    1
-};
-const float mins[NUM_FEATURES] = {1.0, 0.0, 11.22, 0.59};
-const float maxs[NUM_FEATURES] = {90.0, 110.0, 45.56, 96.0};
+// Relay configuration
+#define RELAY_ACTIVE_LOW false
 
 // Timing constants
 const unsigned long WATERING_COOLDOWN = 24UL * 60 * 60 * 1000; // 24 hours
-const unsigned long UPLOAD_INTERVAL = 5UL * 60 * 60 * 1000; // 5 hours
+const unsigned long CYCLE_LENGTH = 110UL * 60 * 1000;          // 110 minutes
+
+// k-NN parameters
+const int NUM_FEATURES = 4;
+const int K = 3;
+const int NUM_SAMPLES = 200; // Full dataset size
+KNNClassifier knn(NUM_FEATURES);
+
+// Full dataset (200 samples, 4 features each)
+float dataset[NUM_SAMPLES][NUM_FEATURES] = {
+  {0.2360, 0.5364, 0.3805, 0.6063}, {0.5618, 0.0091, 0.3789, 0.6069},
+  {0.0562, 0.3000, 0.1829, 1.0000}, {0.3596, 0.6818, 0.3805, 0.6069},
+  {0.3034, 0.1182, 0.3797, 0.6061}, {0.2472, 0.0818, 0.3798, 0.6059},
+  {0.3034, 0.3727, 0.3801, 0.6064}, {0.9213, 0.8727, 0.3794, 0.6090},
+  {0.2247, 0.8364, 0.3810, 0.6066}, {0.3146, 0.8727, 0.3809, 0.6069},
+  {0.6742, 0.9182, 0.3801, 0.6082}, {0.5056, 0.1818, 0.3793, 0.6069},
+  {0.7865, 0.9818, 0.3799, 0.6087}, {0.4382, 0.7545, 0.3804, 0.6072},
+  {0.8315, 0.3818, 0.2236, 0.9693}, {0.3708, 0.1636, 0.3796, 0.6064},
+  {0.9663, 0.2909, 0.7525, 0.0345}, {0.4157, 0.4545, 0.2618, 0.1424},
+  {0.3596, 0.3636, 0.3800, 0.6065}, {0.1011, 0.4727, 0.3807, 0.6058},
+  {0.4494, 0.0364, 0.3792, 0.6065}, {0.1236, 0.4545, 0.6293, 0.0644},
+  {0.9888, 0.1727, 0.3782, 0.6086}, {0.0337, 0.6545, 0.5108, 0.5417},
+  {0.4157, 0.4909, 0.3800, 0.6069}, {1.0000, 0.4727, 0.4333, 0.5609},
+  {0.5955, 0.7091, 0.3799, 0.6077}, {0.5618, 0.0091, 0.3789, 0.6069},
+  {0.0899, 0.1000, 0.3802, 0.6053}, {0.9663, 0.7818, 0.3792, 0.6091},
+  {0.0449, 0.7000, 0.3812, 0.6058}, {0.7191, 0.2818, 0.3790, 0.6077},
+  {0.5955, 0.6091, 0.3798, 0.6076}, {0.7978, 0.6636, 0.3794, 0.6084},
+  {0.0674, 0.9273, 0.1829, 1.0000}, {0.2697, 0.6091, 0.3806, 0.6065},
+  {0.0225, 0.7818, 0.3814, 0.6058}, {0.2135, 0.2273, 0.5422, 0.4498},
+  {0.9551, 0.1182, 0.3782, 0.6084}, {0.2697, 0.2636, 0.3800, 0.6061},
+  {0.3483, 0.5727, 0.3503, 0.7032}, {0.3146, 0.6000, 0.3804, 0.6066},
+  {0.5618, 0.4364, 0.3796, 0.6073}, {0.0674, 0.6364, 0.3811, 0.6058},
+  {0.3820, 0.3545, 0.2650, 0.9349}, {0.3258, 0.2091, 0.3798, 0.6063},
+  {0.5506, 0.1909, 0.3792, 0.6070}, {0.6517, 0.4818, 0.3795, 0.6077},
+  {0.7079, 0.9000, 0.6846, 0.1279}, {0.0225, 0.7455, 0.3813, 0.6058},
+  {0.1348, 0.3636, 0.3805, 0.6058}, {0.3820, 0.0545, 0.6747, 0.2629},
+  {0.7978, 0.9364, 0.3798, 0.6087}, {0.2135, 0.4545, 0.3804, 0.6061},
+  {1.0000, 0.9636, 0.3794, 0.6094}, {0.8202, 0.2545, 0.3787, 0.6081},
+  {0.6854, 0.3091, 0.3791, 0.6076}, {0.9775, 0.2636, 0.3783, 0.6086},
+  {0.5056, 0.4636, 0.3798, 0.6072}, {0.4270, 0.8455, 0.3148, 0.1997},
+  {0.5506, 0.6000, 0.3799, 0.6075}, {0.5393, 0.9091, 0.3804, 0.6077},
+  {0.7753, 0.8545, 0.3797, 0.6085}, {0.5506, 0.9364, 0.3804, 0.6078},
+  {0.7978, 0.8636, 0.3797, 0.6086}, {0.1573, 0.1636, 0.3801, 0.6056},
+  {0.5730, 0.8182, 0.3802, 0.6078}, {0.1011, 1.0000, 0.3816, 0.6063},
+  {0.8876, 0.6636, 0.3792, 0.6087}, {0.2921, 0.2545, 0.3799, 0.6062},
+  {1.0000, 0.5545, 0.2915, 0.2413}, {0.4494, 0.4091, 0.3798, 0.6069},
+  {0.8202, 0.1636, 0.3786, 0.6080}, {0.2022, 0.7273, 0.7397, 0.2623},
+  {0.6404, 0.7364, 0.2347, 0.8589}, {0.3483, 0.9273, 0.3809, 0.6071},
+  {0.0899, 0.2545, 0.3804, 0.6055}, {0.8876, 0.3364, 0.3787, 0.6084},
+  {0.3708, 0.3909, 0.3800, 0.6066}, {0.0225, 0.3182, 0.3807, 0.6053},
+  {0.3258, 0.1091, 0.3796, 0.6062}, {0.2809, 0.2727, 0.3800, 0.6062},
+  {0.5843, 0.9636, 0.2117, 0.8051}, {0.5730, 0.3364, 0.3794, 0.6073},
+  {0.8090, 0.2273, 0.3787, 0.6080}, {0.3933, 0.6455, 0.3803, 0.6070},
+  {0.4270, 0.1364, 0.3794, 0.6066}, {0.7865, 0.2273, 0.3787, 0.6079},
+  {0.9551, 0.5182, 0.3788, 0.6088}, {0.9438, 0.0273, 0.3781, 0.6083},
+  {0.7191, 0.7727, 0.3797, 0.6082}, {0.9101, 0.9636, 0.3796, 0.6091},
+  {0.7978, 0.5091, 0.4330, 0.6690}, {0.4157, 0.3091, 0.2548, 1.0000},
+  {0.3933, 0.6182, 0.3803, 0.6069}, {0.1236, 0.9818, 0.3815, 0.6064},
+  {0.7191, 0.1727, 0.3788, 0.6076}, {0.8652, 0.2000, 0.3785, 0.6082},
+  {0.1124, 0.2636, 0.3804, 0.6056}, {0.4157, 0.9727, 0.3808, 0.6074},
+  {0.6742, 0.0545, 0.3787, 0.6073}, {0.8989, 0.5909, 0.3790, 0.6087},
+  {0.8090, 0.4818, 0.3791, 0.6082}, {0.0112, 0.2818, 0.3807, 0.6052},
+  {0.2135, 0.4273, 0.3804, 0.6061}, {0.6966, 0.0818, 0.3787, 0.6074},
+  {0.8652, 0.9545, 0.3797, 0.6089}, {0.4270, 0.7364, 0.4383, 0.4979},
+  {0.9888, 0.0818, 0.3780, 0.6085}, {0.4494, 0.0182, 0.3792, 0.6065},
+  {0.6854, 0.7545, 0.3798, 0.6081}, {0.1461, 0.5091, 0.3807, 0.6059},
+  {0.2472, 0.5818, 0.3806, 0.6064}, {0.2584, 0.6091, 0.3806, 0.6064},
+  {0.3820, 0.9909, 0.3809, 0.6073}, {0.6966, 0.9909, 0.3801, 0.6084},
+  {0.4831, 0.3727, 0.3797, 0.6070}, {0.5730, 0.5727, 0.3798, 0.6075},
+  {0.9326, 0.3182, 0.3785, 0.6085}, {0.0000, 0.5545, 0.3811, 0.6055},
+  {0.1461, 0.8091, 0.3812, 0.6063}, {0.0562, 0.3818, 0.3807, 0.6055},
+  {0.1348, 0.7545, 0.3811, 0.6062}, {0.5506, 0.4364, 0.3796, 0.6073},
+  {0.2697, 0.6909, 0.3807, 0.6066}, {0.0899, 0.6455, 0.3810, 0.6059},
+  {0.8764, 0.7273, 0.3793, 0.6087}, {0.1348, 0.7818, 0.3811, 0.6062},
+  {0.1910, 0.2364, 0.2003, 1.0000}, {0.4157, 0.4273, 0.3799, 0.6068},
+  {0.5618, 0.4636, 0.3796, 0.6074}, {0.5393, 0.0091, 0.3790, 0.6068},
+  {0.5618, 0.5545, 0.3798, 0.6075}, {0.1573, 0.2636, 0.3803, 0.6057},
+  {0.5955, 0.4000, 0.3795, 0.6074}, {0.6292, 0.4273, 0.3794, 0.6076},
+  {0.5169, 0.4818, 0.3798, 0.6072}, {0.4045, 0.4455, 0.3800, 0.6068},
+  {0.9775, 0.1364, 0.3781, 0.6085}, {0.5169, 0.0364, 0.6200, 0.0729},
+  {0.6067, 0.6636, 0.3550, 0.2283}, {0.0674, 0.6818, 0.3113, 0.7419},
+  {0.3596, 0.5273, 0.3802, 0.6067}, {0.2360, 0.8545, 0.5323, 0.2871},
+  {0.8652, 0.5182, 0.3790, 0.6085}, {0.1798, 0.8545, 0.3811, 0.6064},
+  {0.0337, 0.1818, 0.7368, 0.0380}, {0.7640, 0.1091, 0.3786, 0.6077},
+  {0.4045, 0.1545, 0.3795, 0.6065}, {0.3596, 0.3455, 0.2152, 0.9639},
+  {0.6180, 0.7091, 0.3799, 0.6078}, {0.2921, 0.7909, 0.3808, 0.6068},
+  {0.0674, 0.1182, 0.3803, 0.6053}, {0.6517, 0.4273, 0.1803, 0.5643},
+  {0.5169, 0.7091, 0.3801, 0.6075}, {0.3820, 0.3182, 0.3798, 0.6066},
+  {0.2135, 0.8273, 0.3200, 0.7043}, {0.7978, 0.2727, 0.3788, 0.6080},
+  {0.6629, 0.8818, 0.3801, 0.6081}, {0.0112, 0.6091, 0.2225, 0.8130},
+  {0.1573, 0.7818, 0.3811, 0.6063}, {0.7079, 0.6636, 0.3796, 0.6081},
+  {1.0000, 0.4455, 0.3786, 0.6089}, {0.4719, 0.8636, 0.4738, 0.6282},
+  {0.2247, 0.5091, 0.2234, 1.0000}, {0.7079, 0.8364, 0.3799, 0.6083},
+  {0.3708, 0.0545, 0.2292, 0.9798}, {0.0787, 0.3636, 0.1677, 0.8570},
+  {0.2247, 0.0909, 0.3798, 0.6058}, {0.3933, 0.3182, 0.3798, 0.6066},
+  {0.0000, 0.5727, 0.2135, 1.0000}, {0.7865, 0.2273, 0.3698, 0.6153},
+  {0.9101, 0.8727, 0.3795, 0.6090}, {0.3034, 0.4818, 0.3803, 0.6065},
+  {0.1573, 0.6364, 0.3809, 0.6061}, {0.5169, 0.7091, 0.3801, 0.6075},
+  {0.4831, 0.8818, 0.3805, 0.6075}, {0.3034, 0.3000, 0.3800, 0.6063},
+  {0.2921, 0.7000, 0.3806, 0.6067}, {0.6292, 0.1182, 0.3789, 0.6072},
+  {0.9438, 0.5636, 0.3789, 0.6088}, {0.3596, 0.1364, 0.3796, 0.6063},
+  {0.7978, 0.0091, 0.3784, 0.6077}, {0.1798, 0.6364, 0.3808, 0.6062},
+  {0.5281, 0.3818, 0.3796, 0.6072}, {0.6067, 0.3727, 0.3794, 0.6074},
+  {0.5618, 0.5909, 0.3798, 0.6075}, {0.6292, 0.4818, 0.4132, 0.2270},
+  {0.8315, 0.5909, 0.3792, 0.6084}, {0.5843, 0.6818, 0.3799, 0.6077},
+  {0.7865, 1.0000, 0.3799, 0.6087}, {0.9888, 0.9182, 0.2327, 0.8095},
+  {0.1798, 0.4455, 0.3805, 0.6060}, {0.2472, 0.6727, 0.5285, 0.5361},
+  {0.4270, 0.5364, 0.3801, 0.6070}, {0.1124, 0.7818, 0.3812, 0.6061},
+  {0.6742, 0.3182, 0.3791, 0.6076}, {0.0899, 0.4909, 0.3808, 0.6057},
+  {0.4382, 0.5727, 0.3801, 0.6070}, {0.9775, 0.8182, 0.3792, 0.6092}
+};
+
+// Labels (200 samples, removed extra value)
+int labels[NUM_SAMPLES] = {
+  1, 1, 1, 1, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1,
+  1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1,
+  1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0,
+  0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1,
+  1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0,
+  1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1,
+  1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1,
+  0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1,
+  1, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1,
+  0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1
+};
+const float mins[NUM_FEATURES] = {1.00, 0.00, 11.22, 0.59};
+const float maxs[NUM_FEATURES] = {90.00, 110.00, 45.56, 96.00};
+
+// Global objects and variables
+DHT dht(DHT_PIN, DHT_TYPE);
 unsigned long lastWateringTime = 0;
-unsigned long sendDataPrevMillis = 0;
+unsigned long cycleStart = 0;
 bool pump_activated = false;
-static unsigned long cycleStart = 0;
-const unsigned long CYCLE_LENGTH = 110UL * 60 * 1000; // 110 minutes
 
 void setup() {
   pinMode(PUMP_PIN, OUTPUT);
-  digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW); // Ensure pump is OFF
+  digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW); // Pump OFF
   Serial.begin(9600);
   dht.begin();
 
-  // Initialize RTC
-  if (!rtc.begin()) {
-    Serial.println("RTC failed, using uptime-based timestamp");
-    // Continue without RTC, using millis() for timestamps
-  } else if (rtc.lostPower()) {
-    Serial.println("RTC lost power, setting to compile time");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  // Initialize k-NN classifier
+  for (int i = 0; i < NUM_SAMPLES; i++) {
+    knn.addExample(dataset[i], labels[i]);
   }
 
-  // Connect to Wi-Fi
-  connectWiFi();
   Serial.println("Arduino ready!");
 }
 
 void loop() {
-  // Ensure pump is OFF unless explicitly activated
-  digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW);
-
-  // Read sensors
-  int raw_moisture = analogRead(SOIL_PIN);
-  if (raw_moisture < 0 || raw_moisture > 1023) {
-    Serial.println("Invalid moisture reading, skipping.");
+  // Read and validate sensors
+  float moisture, temp, hum, time_value;
+  if (!readSensors(&moisture, &temp, &hum, &time_value)) {
+    Serial.println("Sensor read failed, retrying...");
     delay(5000);
     return;
   }
-  float moisture = 100 - (raw_moisture / 1023.0 * 100); // Convert to dryness %
-  float temp = dht.readTemperature();
-  float hum = dht.readHumidity();
-  if (isnan(temp) || isnan(hum)) {
-    Serial.println("DHT sensor error, using defaults.");
-    temp = 25.0;
-    hum = 60.0;
+
+  // Normalize inputs for k-NN
+  float new_point[NUM_FEATURES];
+  normalizeInputs(moisture, time_value, temp, hum, new_point);
+
+  // Run k-NN prediction
+  int prediction = knn.classify(new_point, K);
+  Serial.print("Predicted Status: ");
+  Serial.println(prediction ? "ON" : "OFF");
+
+  // Control pump
+  controlPump(prediction);
+
+  // Handle serial commands
+  handleSerialCommands();
+
+  delay(5000); // Check every 5 seconds
+}
+
+bool readSensors(float* moisture, float* temp, float* hum, float* time_value) {
+  // Read soil moisture
+  int raw_moisture = analogRead(SOIL_PIN);
+  if (raw_moisture < 0 || raw_moisture > 1023) {
+    return false;
+  }
+  *moisture = 100 - (raw_moisture / 1023.0 * 100); // Convert to dryness %
+
+  // Read DHT sensor
+  *temp = dht.readTemperature();
+  *hum = dht.readHumidity();
+  if (isnan(*temp) || isnan(*hum)) {
+    *temp = 25.0;
+    *hum = 60.0;
   }
 
   // Validate readings
-  if (moisture < 0 || moisture > 100 || temp < -40 || temp > 80 || hum < 0 || hum > 100) {
-    Serial.println("Sensor error, skipping.");
-    delay(5000);
-    return;
+  if (*moisture < 0 || *moisture > 100 || *temp < -40 || *temp > 80 || *hum < 0 || *hum > 100) {
+    return false;
   }
 
-  // Calculate time_value (overflow-safe)
+  // Calculate time_value
   if (millis() - cycleStart >= CYCLE_LENGTH) {
     cycleStart += CYCLE_LENGTH;
   }
-  float time_value = (millis() - cycleStart) / 60000.0; // Minutes since cycle start
+  *time_value = (millis() - cycleStart) / 60000.0; // Minutes since cycle start
 
-  // Print data
-  Serial.print("Moisture:"); Serial.print(moisture);
-  Serial.print(",Temp:"); Serial.print(temp);
-  Serial.print(",Humidity:"); Serial.print(hum);
-  Serial.print(",Time:"); Serial.println(time_value);
+  // Print sensor data
+  Serial.print("Moisture: "); Serial.print(*moisture);
+  Serial.print(", Temp: "); Serial.print(*temp);
+  Serial.print(", Humidity: "); Serial.print(*hum);
+  Serial.print(", Time: "); Serial.println(*time_value);
 
-  // Normalize for k-NN
-  float new_point[NUM_FEATURES];
+  return true;
+}
+
+void normalizeInputs(float moisture, float time_value, float temp, float hum, float* new_point) {
   new_point[0] = constrain((moisture - mins[0]) / (maxs[0] - mins[0]), 0, 1);
   new_point[1] = constrain((time_value - mins[1]) / (maxs[1] - mins[1]), 0, 1);
   new_point[2] = constrain((temp - mins[2]) / (maxs[2] - mins[2]), 0, 1);
@@ -126,58 +235,21 @@ void loop() {
     Serial.print(new_point[i], 4); Serial.print(" ");
   }
   Serial.println();
+}
 
-  // Run k-NN
-  int prediction = knn_predict(new_point);
-  Serial.print("Predicted Status: ");
-  Serial.println(prediction ? "ON" : "OFF");
-
-  // Pump control (non-blocking)
+void controlPump(int prediction) {
   if (prediction == 1 && (millis() - lastWateringTime >= WATERING_COOLDOWN)) {
     Serial.println("Activating pump...");
     digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? LOW : HIGH);
-    unsigned long pumpStart = millis();
-    while (millis() - pumpStart < 6000) {
-      if (WiFi.status() != WL_CONNECTED) connectWiFi();
-    }
+    delay(6000); // Run pump for 6 seconds
     digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW);
     Serial.println("Pump state: OFF (after 6s)");
     lastWateringTime = millis();
     pump_activated = true;
   }
+}
 
-  // Upload sensor data every 5 hours
-  if (millis() - sendDataPrevMillis > UPLOAD_INTERVAL) {
-    sendDataPrevMillis = millis();
-    String timestamp = String(millis());
-    String json = "{\"moisture\":" + String(moisture, 1) +
-                  ",\"temp\":" + String(temp, 1) +
-                  ",\"humidity\":" + String(hum, 1) +
-                  ",\"time\":" + String(time_value, 1) +
-                  ",\"timestamp\":\"" + getTimestamp() + "\"}";
-
-    String path = "/mungbean/sensors/" + timestamp + ".json?auth=" + String(DATABASE_SECRET);
-    if (uploadData(path, json)) {
-      Serial.println("Sensor data uploaded!");
-    } else {
-      Serial.println("Sensor upload failed.");
-    }
-  }
-
-  // Immediate pump log upload
-  if (pump_activated) {
-    String timestamp = String(millis());
-    String pump_json = "{\"pump_activated\":true,\"duration\":6,\"timestamp\":\"" + getTimestamp() + "\"}";
-    String pump_path = "/mungbean/pump_log/" + timestamp + ".json?auth=" + String(DATABASE_SECRET);
-    if (uploadData(pump_path, pump_json)) {
-      Serial.println("Pump log uploaded!");
-    } else {
-      Serial.println("Pump log failed.");
-    }
-    pump_activated = false;
-  }
-
-  // Serial commands
+void handleSerialCommands() {
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
@@ -186,10 +258,7 @@ void loop() {
       if (runtime_s > 0 && runtime_s <= 10) {
         Serial.println("Manual pump activation...");
         digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? LOW : HIGH);
-        unsigned long pumpStart = millis();
-        while (millis() - pumpStart < runtime_s * 1000) {
-          if (WiFi.status() != WL_CONNECTED) connectWiFi();
-        }
+        delay(runtime_s * 1000);
         digitalWrite(PUMP_PIN, RELAY_ACTIVE_LOW ? HIGH : LOW);
         Serial.println("Pump state: OFF (manual)");
         pump_activated = true;
@@ -198,101 +267,4 @@ void loop() {
       }
     }
   }
-
-  delay(5000); // Check every 5 seconds
-}
-
-// Wi-Fi connection handler
-void connectWiFi() {
-  Serial.print("Connecting to Wi-Fi");
-  WiFi.disconnect();
-  while (WiFi.begin(WIFI_SSID, WIFI_PASSWORD) != WL_CONNECTED) {
-    Serial.print(".");
-    delay(300);
-  }
-  Serial.println();
-  Serial.print("Connected with IP: ");
-  Serial.println(WiFi.localIP());
-}
-
-// Upload data to Firebase with retry logic
-bool uploadData(String path, String json) {
-  int maxRetries = 3;
-  int retryCount = 0;
-  while (retryCount < maxRetries) {
-    if (WiFi.status() != WL_CONNECTED) connectWiFi();
-    client.beginRequest();
-    client.post(path);
-    client.sendHeader("Content-Type", "application/json");
-    client.sendHeader("Content-Length", json.length());
-    client.beginBody();
-    client.print(json);
-    client.endRequest();
-
-    int statusCode = client.responseStatusCode();
-    String response = client.responseBody();
-    client.stop(); // Release resources
-    if (statusCode == 200) {
-      return true;
-    } else {
-      Serial.print("Upload failed (attempt "); Serial.print(retryCount + 1);
-      Serial.print("): "); Serial.println(response);
-      retryCount++;
-      delay(1000 * retryCount); // Exponential backoff
-    }
-  }
-  return false;
-}
-
-// Get timestamp (RTC or uptime-based)
-String getTimestamp() {
-  if (rtc.begin()) {
-    DateTime now = rtc.now();
-    char buf[] = "YYYY-MM-DDThh:mm:ssZ";
-    return String(now.toString(buf));
-  } else {
-    return "1970-01-01T" + String(millis() / 1000) + "Z"; // Uptime-based
-  }
-}
-
-// Optimized k-NN prediction
-int knn_predict(float* new_point) {
-  struct Neighbor {
-    float distance;
-    int index;
-  };
-  Neighbor neighbors[K];
-  for (int i = 0; i < K; i++) {
-    neighbors[i].distance = 1e9;
-    neighbors[i].index = -1;
-  }
-
-  for (int i = 0; i < NUM_SAMPLES; i++) {
-    float dist = 0.0;
-    for (int j = 0; j < NUM_FEATURES; j++) {
-      float value = pgm_read_float(&dataset[i][j]);
-      dist += pow(new_point[j] - value, 2);
-    }
-    dist = sqrt(dist);
-
-    for (int j = 0; j < K; j++) {
-      if (dist < neighbors[j].distance) {
-        for (int k = K - 1; k > j; k--) {
-          neighbors[k] = neighbors[k - 1];
-        }
-        neighbors[j].distance = dist;
-        neighbors[j].index = i;
-        break;
-      }
-    }
-  }
-
-  int on_count = 0;
-  for (int i = 0; i < K; i++) {
-    if (neighbors[i].index != -1) {
-      int label = pgm_read_word(&labels[neighbors[i].index]);
-      if (label == 1) on_count++;
-    }
-  }
-  return (on_count > K / 2) ? 1 : 0;
 }
