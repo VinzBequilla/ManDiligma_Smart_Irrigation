@@ -1,114 +1,58 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.svm import SVR 
-from sklearn.metrics import mean_squared_error, r2_score
-import joblib
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
 
-# Load the data from the CSV file.
-try:
-    df = pd.read_csv('svm/TARP.csv')
-    print("Data loaded successfully from 'svm/TARP.csv'.")
-    print("Original columns in the dataset:", df.columns.tolist())
-except FileNotFoundError:
-    print("Error: The file 'svm/TARP.csv' was not found. Please ensure the path is correct.")
-    exit()
+# ==============================
+# 1. Load dataset
+# ==============================
+df = pd.read_csv("svm\TARP.csv")
 
-# --- DATASET INSPECTION ---
-print("\n--- Inspecting the Dataset ---")
-# Display the first 5 rows to check column names and data types
-print("\nFirst 5 rows of the dataset:")
-print(df.head())
+# Drop rows with NaN
+df = df.dropna()
 
-# Get a concise summary of the DataFrame
-print("\nDataFrame information:")
-print(df.info())
+# Select features + label
+# Adjust column names if needed
+features = ["Soil Moisture", "Temperature", "Soil Humidity", "Air temperature (C)", "Air humidity (%)"]
+X = df[features].values
+y = df["Status"].map({"OFF":0, "ON":1}).values  # Convert ON/OFF → 1/0
 
-# Show descriptive statistics for numerical columns
-print("\nDescriptive statistics:")
-print(df.describe())
+# ==============================
+# 2. Normalize features
+# ==============================
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
 
-# Check for any missing (null) values in each column
-print("\nMissing values per column:")
-print(df.isnull().sum())
-print("----------------------------")
+# ==============================
+# 3. Split + Train KNN
+# ==============================
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
+knn = KNeighborsClassifier(n_neighbors=3)
+knn.fit(X_train, y_train)
+y_pred = knn.predict(X_test)
 
-# --- DATA CLEANING ---
-# SVR does not handle missing values, so we will remove any rows with NaN.
-initial_rows = len(df)
-df.dropna(inplace=True)
-cleaned_rows = len(df)
-if initial_rows > cleaned_rows:
-    print(f"\nRemoved {initial_rows - cleaned_rows} rows with missing values.")
-    print(f"Dataset now has {cleaned_rows} rows.")
-    print("----------------------------")
+print("KNN Accuracy:", accuracy_score(y_test, y_pred))
 
-# --- IMPORTANT: TARGET VARIABLE MISSING ---
-# Your model needs a target variable (e.g., 'water_needed') to learn from.
-# The dataset you provided does not have a column for the amount of water used.
-# You must add this column to your CSV file for the model to work correctly.
-# The 'water_needed' column should contain the measured amount of water that was
-# applied for each set of sensor readings.
-# For now, we will create a placeholder column with dummy data.
-df['water_needed'] = np.random.uniform(1, 10, len(df))
+# ==============================
+# 4. Export sample predictions
+# ==============================
+sample = [[600, 34, 40, 30, 60]]  # example soil moisture/temp/etc
+sample_scaled = scaler.transform(sample)
+print("Prediction for sample:", knn.predict(sample_scaled))
 
-# Separate the features (X) and the target variable (y).
-# We are selecting the most relevant features based on your input.
-# If your column names are different, please update this line.
-features = ['Soil Moisture', 'Air temperature (C)', 'Air humidity (%)']
-X = df[features]
-y = df['water_needed']
+# ==============================
+# 5. Export reduced dataset for Arduino
+# ==============================
+# Take small balanced subset (max 10 ON + 10 OFF)
+df_on = df[df["Status"]=="ON"].sample(min(10, len(df[df["Status"]=="ON"])), random_state=42)
+df_off = df[df["Status"]=="OFF"].sample(min(10, len(df[df["Status"]=="OFF"])), random_state=42)
 
-# Split the data into training and testing sets.
-# We use 80% of the data for training and 20% for testing.
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+df_small = pd.concat([df_on, df_off])
 
-# We are now using a Support Vector Regressor (SVR).
-# The 'kernel' parameter defines the type of function used to find the hyperplane.
-# The 'C' and 'gamma' parameters are crucial for tuning.
-# You can experiment with different values and kernels to find the best fit.
-model = SVR(kernel='rbf', C=100, gamma=0.1)
-
-# Train the model using the training data.
-print("\nTraining the SVR model...")
-model.fit(X_train, y_train)
-print("Model training complete.")
-
-# Make predictions on the unseen test data.
-y_pred = model.predict(X_test)
-
-# Calculate performance metrics.
-# Mean Squared Error (MSE) measures the average squared difference between the
-# predicted and actual values. Lower values are better.
-mse = mean_squared_error(y_test, y_pred)
-# R-squared (R2) score indicates how well the model's predictions fit the actual data.
-# A value of 1.0 means a perfect fit.
-r2 = r2_score(y_test, y_pred)
-
-print("\n--- Model Evaluation ---")
-print(f"Mean Squared Error (MSE): {mse:.4f}")
-print(f"R-squared (R2) Score: {r2:.4f}")
-
-# Simulate new sensor readings.
-# These would be the live data from your IoT sensors.
-new_sensor_readings = pd.DataFrame({
-    'Soil Moisture': [350],
-    'Air temperature (C)': [28],
-    'Air humidity (%)': [55]
-})
-
-# Use the trained model to predict the amount of water needed.
-predicted_water_needed = model.predict(new_sensor_readings)
-
-print("\n--- Making a New Prediction ---")
-print(f"New sensor readings:")
-print(f"  Soil Moisture: {new_sensor_readings['Soil Moisture'].values[0]}")
-print(f"  Air temperature (C): {new_sensor_readings['Air temperature (C)'].values[0]}")
-print(f"  Air humidity (%): {new_sensor_readings['Air humidity (%)'].values[0]}")
-print(f"Predicted water needed: {predicted_water_needed[0]:.2f} units.")
-
-# You can optionally save the trained model to a file for later use
-# without retraining.
-joblib.dump(model, 'irrigation_model.pkl')
-print("\nModel saved to 'irrigation_model.pkl'.")
+print("\n=== Arduino Training Set ===")
+for _, row in df_small.iterrows():
+    print(f'{{{{{int(row["Soil Moisture"])}, {int(row["Temperature"])}, {int(row["Soil Humidity"])}, '
+          f'{int(row["Air temperature (C)"])}, {int(row["Air humidity (%)"])} }}, {1 if row["Status"]=="ON" else 0}}},')
