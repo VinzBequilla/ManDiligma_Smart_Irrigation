@@ -131,7 +131,7 @@ bool readSensors(float* moisture, float* temp, float* hum) {
   Serial.print("Raw moisture: "); Serial.println(raw_moisture);
 
   // adjust this depending on your sensor’s behavior
-  *moisture = (raw_moisture / 1023.0 * 100); // remove "100 - ..." if inverted
+  *moisture = 100 - (raw_moisture / 1023.0 * 100);
 
   *temp = dht.readTemperature();
   *hum = dht.readHumidity();
