@@ -2,9 +2,20 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Dimensions, Animated, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, onValue } from 'firebase/database';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(420, width - 32);
+
+// ✅ Firebase Config
+const firebaseConfig = {
+  databaseURL: 'https://mandiligma-16e1c-default-rtdb.asia-southeast1.firebasedatabase.app',
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
 
 type SensorCardProps = {
   title: string;
@@ -64,27 +75,56 @@ type Readings = {
 
 export default function SmartIrrigationAppDesign() {
   const [readings, setReadings] = useState<Readings>({
-    temperature: 27.4,
-    humidity: 64,
-    soil: 42,
+    temperature: 0,
+    humidity: 0,
+    soil: 0,
     ph: 6.8,
-    wateringHistory: ['Oct 30, 2025 14:12', 'Oct 29, 2025 08:40', 'Oct 28, 2025 17:55', 'Oct 27, 2025 12:30', 'Oct 26, 2025 09:20'],
+    wateringHistory: [],
   });
 
   const [modalVisible, setModalVisible] = useState(false);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setReadings((r) => ({
-        ...r,
-        temperature: +(r.temperature + (Math.random() - 0.5) * 0.6).toFixed(1),
-        humidity: Math.max(20, Math.min(95, Math.round(r.humidity + (Math.random() - 0.5) * 2))),
-        soil: Math.max(5, Math.min(95, Math.round(r.soil + (Math.random() - 0.5) * 3))),
-        ph: +(r.ph + (Math.random() - 0.5) * 0.05).toFixed(2),
-      }));
-    }, 2500);
-    return () => clearInterval(id);
-  }, []);
+  const readingsRef = ref(db, 'readings');
+
+  const unsubscribe = onValue(readingsRef, (snapshot) => {
+    const data = snapshot.val();
+    console.log('🔥 Raw snapshot from Firebase:', data);
+
+    if (data) {
+      const entries: any[] = Object.values(data);
+      if (entries.length) {
+        // ✅ Just pick the last entry added
+        const latest = entries[entries.length - 1];
+
+        const history = entries
+          .filter((e) => e.prediction === 1)
+          .map((e) => {
+            const d = new Date();
+            const time = d.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            });
+            return `${time}`;
+          });
+
+        setReadings({
+          temperature: latest.temperature || 0,
+          humidity: latest.humidity || 0,
+          soil: latest.moisture || 0,
+          ph: 6.8,
+          wateringHistory: history,
+        });
+
+        console.log('✅ Updated Live Data:', latest);
+      }
+    }
+  });
+
+  return () => unsubscribe();
+}, []);
+
 
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
